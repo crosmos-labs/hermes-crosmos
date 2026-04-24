@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PLUGIN_NAME="crosmos"
-PLUGIN_DIR_NAME="crosmos-hermes-plugin"
+PLUGIN_DIR_NAME="hermes-crosmos"
 DEFAULT_BASE_URL="https://api.crosmos.dev/v1"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PLUGIN_DIR="$HERMES_HOME/plugins/$PLUGIN_NAME"
@@ -77,11 +77,11 @@ have_cmd python3 || fail "python3 is required"
 
 # install
 info "installing $PLUGIN_DIR_NAME via hermes plugins install"
-HERMES_HOME="$HERMES_HOME" hermes plugins install "crosmos-ai/$PLUGIN_DIR_NAME" 2>/dev/null || {
+HERMES_HOME="$HERMES_HOME" hermes plugins install "crosmos-app/$PLUGIN_DIR_NAME" 2>/dev/null || {
   # Fallback: clone manually
   if [ ! -d "$PLUGIN_DIR" ]; then
     info "cloning plugin manually"
-    git clone "https://github.com/crosmos-ai/$PLUGIN_DIR_NAME.git" "$PLUGIN_DIR" 2>/dev/null ||
+    git clone "https://github.com/crosmos-app/$PLUGIN_DIR_NAME.git" "$PLUGIN_DIR" 2>/dev/null ||
       fail "unable to install plugin; check network or install manually"
   fi
 }
@@ -186,4 +186,3 @@ printf '    1. Start a new Hermes session\n'
 printf '    2. The plugin will auto-recall context and auto-ingest conversations\n'
 printf '    3. Use crosmos_remember, crosmos_recall, crosmos_forget tools explicitly if needed\n'
 printf '    4. Run: hermes memory status  (to verify activation)\n'
-

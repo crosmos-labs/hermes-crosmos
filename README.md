@@ -105,7 +105,7 @@ hermes config set memory.provider ""
 
 | Symptom | Fix |
 |---------|-----|
-| Plugin not showing in `/plugins` | Run `hermes plugins install crosmos-ai/crosmos-hermes-plugin` |
+| Plugin not showing in `/plugins` | Run `hermes plugins install crosmos-app/hermes-crosmos` |
 | "Crosmos is not configured" | Check `CROSMOS_API_KEY` is set in `HERMES_HOME/.env` |
 | Memories not recalled | Check `CROSMOS_SPACE_ID` is set; verify with `crosmos_recall` tool |
 | Connection errors | Verify `CROSMOS_BASE_URL` and check `HERMES_HOME/logs/agent.log` |
