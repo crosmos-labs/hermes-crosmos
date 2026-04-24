@@ -1,8 +1,7 @@
 # Crosmos — Memory for Hermes
 
-Persistent cross-session memory for Hermes Agent, powered by Crosmos.
+Persistent memory layer for Hermes Agent, powered by Crosmos.
 
-Conversations are automatically extracted into entities and relationships, recalled via hybrid search (semantic + keyword + graph), and available across sessions.
 
 ## Prerequisites
 
