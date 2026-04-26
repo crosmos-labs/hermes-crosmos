@@ -16,9 +16,13 @@ CROSMOS_REMEMBER = {
                 "type": "string",
                 "description": "The information to remember. Can be a single fact or a multi-sentence description.",
             },
-            "space_id": {
+            "space_name": {
                 "type": "string",
-                "description": "UUID of the memory space (optional, uses default if not set).",
+                "description": (
+                    "Human-readable name of the memory space (optional). "
+                    "Pass this when the user mentions a specific space by name. "
+                    "If omitted, the default space (CROSMOS_SPACE_NAME) is used."
+                ),
             },
         },
         "required": ["content"],
@@ -41,9 +45,13 @@ CROSMOS_RECALL = {
                 "type": "string",
                 "description": "Natural language search query for relevant memories.",
             },
-            "space_id": {
+            "space_name": {
                 "type": "string",
-                "description": "UUID of the memory space (optional, uses default if not set).",
+                "description": (
+                    "Human-readable name of the memory space (optional). "
+                    "Pass this when the user mentions a specific space by name. "
+                    "If omitted, the default space (CROSMOS_SPACE_NAME) is used."
+                ),
             },
             "limit": {
                 "type": "integer",
@@ -89,9 +97,13 @@ CROSMOS_GRAPH_STATS = {
     "parameters": {
         "type": "object",
         "properties": {
-            "space_id": {
+            "space_name": {
                 "type": "string",
-                "description": "UUID of the memory space (optional, uses default if not set).",
+                "description": (
+                    "Human-readable name of the memory space (optional). "
+                    "Pass this when the user mentions a specific space by name. "
+                    "If omitted, the default space (CROSMOS_SPACE_NAME) is used."
+                ),
             },
         },
         "required": [],

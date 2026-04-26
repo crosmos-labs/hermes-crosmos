@@ -3,7 +3,7 @@ set -euo pipefail
 
 PLUGIN_NAME="crosmos"
 PLUGIN_DIR_NAME="hermes-crosmos"
-DEFAULT_BASE_URL="https://api.crosmos.dev/v1"
+DEFAULT_BASE_URL="https://api.crosmos.dev/api/v1"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PLUGIN_DIR="$HERMES_HOME/plugins/$PLUGIN_NAME"
 HERMES_ENV_FILE="$HERMES_HOME/.env"
@@ -43,22 +43,43 @@ upsert_env_value() {
 }
 
 verify_api_key() {
-  local key="$1" url="$2"
+  local key="$1" url="$2" health_url
   have_cmd curl || return 1
+  # /health is mounted at the host root, not under the API prefix.
+  health_url="$(printf '%s' "$url" | sed -E 's|^(https?://[^/]+).*|\1/health|')"
   curl -fsSL --connect-timeout 5 --max-time 10 \
     -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
-    "${url%/}/health" >/dev/null 2>&1
+    "$health_url" >/dev/null 2>&1
+}
+
+get_first_org_id() {
+  local key="$1" url="$2" response
+  response="$(
+    curl -fsSL --connect-timeout 5 --max-time 10 \
+      -H "Authorization: Bearer $key" \
+      -H "Content-Type: application/json" \
+      "${url%/}/orgs" 2>/dev/null
+  )"
+  printf '%s' "$response" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    orgs = d.get("orgs", [])
+    print(orgs[0]["id"] if orgs else "")
+except Exception:
+    print("")
+'
 }
 
 create_space() {
-  local key="$1" url="$2" name="$3" response
+  local key="$1" url="$2" name="$3" org_id="$4" response
   response="$(
     curl -fsSL --connect-timeout 5 --max-time 15 \
       -X POST \
       -H "Authorization: Bearer $key" \
       -H "Content-Type: application/json" \
-      -d "{\"name\": \"$name\", \"description\": \"Hermes agent memory\"}" \
+      -d "{\"org_id\": \"$org_id\", \"name\": \"$name\", \"description\": \"Hermes agent memory\"}" \
       "${url%/}/spaces" 2>/dev/null
   )"
   printf '%s' "$response" | python3 -c '
@@ -81,7 +102,7 @@ HERMES_HOME="$HERMES_HOME" hermes plugins install "crosmos-app/$PLUGIN_DIR_NAME"
   # Fallback: clone manually
   if [ ! -d "$PLUGIN_DIR" ]; then
     info "cloning plugin manually"
-    git clone "https://github.com/crosmos-labs/$PLUGIN_DIR_NAME.git" "$PLUGIN_DIR" 2>/dev/null ||
+    git clone "https://github.com/crosmos-app/$PLUGIN_DIR_NAME.git" "$PLUGIN_DIR" 2>/dev/null ||
       fail "unable to install plugin; check network or install manually"
   fi
 }
@@ -91,9 +112,9 @@ HERMES_HOME="$HERMES_HOME" hermes plugins install "crosmos-app/$PLUGIN_DIR_NAME"
 
 info "plugin installed at $PLUGIN_DIR"
 
-# config
-existing_url="$(read_env_value "CROSMOS_BASE_URL" "$HERMES_ENV_FILE")"
-CROSMOS_BASE_URL="${CROSMOS_BASE_URL:-${existing_url:-$DEFAULT_BASE_URL}}"
+# config — always overwrite saved base URL with the current default
+# (only honor an explicit CROSMOS_BASE_URL passed in the environment)
+CROSMOS_BASE_URL="${CROSMOS_BASE_URL:-$DEFAULT_BASE_URL}"
 
 existing_key="$(read_env_value "CROSMOS_API_KEY" "$HERMES_ENV_FILE")"
 CROSMOS_API_KEY="${CROSMOS_API_KEY:-}"
@@ -126,29 +147,33 @@ else
   warn "the plugin will be installed but may not function until connectivity is fixed"
 fi
 
-# default space
-existing_space="$(read_env_value "CROSMOS_SPACE_ID" "$HERMES_ENV_FILE")"
-CROSMOS_SPACE_ID="${CROSMOS_SPACE_ID:-}"
+# default space (referenced by name; UUID is resolved at runtime)
+existing_space_name="$(read_env_value "CROSMOS_SPACE_NAME" "$HERMES_ENV_FILE")"
+CROSMOS_SPACE_NAME="${CROSMOS_SPACE_NAME:-${existing_space_name:-hermes-agent}}"
 
-if [ -z "$CROSMOS_SPACE_ID" ]; then
-  info "creating default memory space"
-  CROSMOS_SPACE_ID="$(create_space "$CROSMOS_API_KEY" "$CROSMOS_BASE_URL" "hermes-agent")"
-  if [ -n "$CROSMOS_SPACE_ID" ]; then
-    upsert_env_value "CROSMOS_SPACE_ID" "$CROSMOS_SPACE_ID" "$HERMES_ENV_FILE"
-    success "created memory space: $CROSMOS_SPACE_ID"
-  else
-    warn "could not auto-create space; set CROSMOS_SPACE_ID manually"
-  fi
+info "ensuring memory space '$CROSMOS_SPACE_NAME' exists"
+org_uuid="$(get_first_org_id "$CROSMOS_API_KEY" "$CROSMOS_BASE_URL")"
+if [ -z "$org_uuid" ]; then
+  warn "could not resolve org for the API key; space creation skipped"
 else
-  success "existing CROSMOS_SPACE_ID found: $CROSMOS_SPACE_ID"
+  # create_space is idempotent for our purposes: if it already exists the API
+  # returns an error and the call is a no-op.
+  created_id="$(create_space "$CROSMOS_API_KEY" "$CROSMOS_BASE_URL" "$CROSMOS_SPACE_NAME" "$org_uuid")"
+  if [ -n "$created_id" ]; then
+    success "created memory space '$CROSMOS_SPACE_NAME'"
+  else
+    info "space '$CROSMOS_SPACE_NAME' already exists or could not be created (continuing)"
+  fi
 fi
+upsert_env_value "CROSMOS_SPACE_NAME" "$CROSMOS_SPACE_NAME" "$HERMES_ENV_FILE"
+success "saved CROSMOS_SPACE_NAME to $HERMES_ENV_FILE"
 
 # config json
-python3 - "$CROSMOS_CONFIG_FILE" "$CROSMOS_BASE_URL" "$CROSMOS_SPACE_ID" <<'PY'
+python3 - "$CROSMOS_CONFIG_FILE" "$CROSMOS_BASE_URL" "$CROSMOS_SPACE_NAME" <<'PY'
 import json, sys
 from pathlib import Path
 
-config_path, base_url, space_id = sys.argv[1], sys.argv[2], sys.argv[3]
+config_path, base_url, space_name = sys.argv[1], sys.argv[2], sys.argv[3]
 existing = {}
 if Path(config_path).exists():
     try:
@@ -157,7 +182,8 @@ if Path(config_path).exists():
         existing = {}
 
 existing["base_url"] = base_url
-existing["space_id"] = space_id
+existing["space_name"] = space_name
+existing.pop("space_id", None)
 existing.pop("api_key", None)
 
 Path(config_path).parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +205,7 @@ printf '\n'
 success "Crosmos Memory plugin is ready!"
 printf '\n  Configuration:\n'
 printf '    API URL:  %s\n' "$CROSMOS_BASE_URL"
-printf '    Space ID:  %s\n' "${CROSMOS_SPACE_ID:-<not set>}"
+printf '    Space:     %s\n' "${CROSMOS_SPACE_NAME:-<not set>}"
 printf '    API Key:   %s...%s\n' "${CROSMOS_API_KEY:0:8}" "${CROSMOS_API_KEY: -4}"
 printf '\n  Next steps:\n'
 printf '    1. Start a new Hermes session\n'

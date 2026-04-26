@@ -7,7 +7,7 @@ requires_env:
     description: "API key for the Crosmos Memory engine"
     secret: true
   - name: CROSMOS_BASE_URL
-    description: "Base URL for the Crosmos API (default: https://api.crosmos.dev/v1)"
+    description: "Base URL for the Crosmos API (default: https://api.crosmos.dev/api/v1)"
 provides_tools:
   - crosmos_remember
   - crosmos_recall

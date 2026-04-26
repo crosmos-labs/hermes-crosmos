@@ -5,9 +5,9 @@ import os
 
 import httpx
 
-_BASE_URL = os.environ.get("CROSMOS_BASE_URL", "https://api.crosmos.dev/v1")
+_BASE_URL = os.environ.get("CROSMOS_BASE_URL", "https://api.crosmos.dev/api/v1")
 _API_KEY = os.environ.get("CROSMOS_API_KEY", "")
-_DEFAULT_SPACE_ID = os.environ.get("CROSMOS_SPACE_ID", "")
+_DEFAULT_SPACE_NAME = os.environ.get("CROSMOS_SPACE_NAME", "")
 
 _client = httpx.Client(
     base_url=_BASE_URL,
@@ -18,19 +18,51 @@ _client = httpx.Client(
     timeout=30.0,
 )
 
+# Process-local cache: space name → UUID. Avoids re-resolving on every call.
+_space_id_cache: dict[str, str] = {}
+
+
+def _resolve_space_id(args: dict) -> tuple[str | None, str | None]:
+    """Resolve a space name to its UUID.
+
+    Priority: ``space_name`` arg → ``CROSMOS_SPACE_NAME`` env default.
+    Returns ``(space_id, error)``. Exactly one is non-None.
+    """
+    name = (args.get("space_name") or _DEFAULT_SPACE_NAME or "").strip()
+    if not name:
+        return None, (
+            "No space configured. Pass space_name or set CROSMOS_SPACE_NAME."
+        )
+
+    if name in _space_id_cache:
+        return _space_id_cache[name], None
+
+    try:
+        resp = _client.get("/spaces", params={"name": name})
+        resp.raise_for_status()
+        spaces = resp.json().get("spaces", [])
+    except httpx.HTTPStatusError as e:
+        return None, f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+    except Exception as e:
+        return None, f"Space lookup failed: {type(e).__name__}: {e}"
+
+    if not spaces:
+        return None, f"No space named '{name}' found."
+
+    space_id = spaces[0]["id"]
+    _space_id_cache[name] = space_id
+    return space_id, None
+
 
 def crosmos_remember(args: dict, **kwargs) -> str:
     """Ingest content into the knowledge graph."""
     content = args.get("content", "").strip()
-    space_id = args.get("space_id") or _DEFAULT_SPACE_ID
-
     if not content:
         return json.dumps({"error": "No content provided"})
 
-    if not space_id:
-        return json.dumps(
-            {"error": "No space_id configured. Set CROSMOS_SPACE_ID or pass space_id."}
-        )
+    space_id, err = _resolve_space_id(args)
+    if err:
+        return json.dumps({"error": err})
 
     try:
         resp = _client.post(
@@ -61,16 +93,15 @@ def crosmos_remember(args: dict, **kwargs) -> str:
 def crosmos_recall(args: dict, **kwargs) -> str:
     """Search the knowledge graph for relevant memories."""
     query = args.get("query", "").strip()
-    space_id = args.get("space_id") or _DEFAULT_SPACE_ID
     limit = min(max(args.get("limit", 10), 1), 50)
     include_source = args.get("include_source", True)
 
     if not query:
         return json.dumps({"error": "No query provided"})
-    if not space_id:
-        return json.dumps(
-            {"error": "No space_id configured. Set CROSMOS_SPACE_ID or pass space_id."}
-        )
+
+    space_id, err = _resolve_space_id(args)
+    if err:
+        return json.dumps({"error": err})
 
     try:
         resp = _client.post(
@@ -136,11 +167,9 @@ def crosmos_forget(args: dict, **kwargs) -> str:
 
 def crosmos_graph_stats(args: dict, **kwargs) -> str:
     """Get knowledge graph statistics."""
-    space_id = args.get("space_id") or _DEFAULT_SPACE_ID
-    if not space_id:
-        return json.dumps(
-            {"error": "No space_id configured. Set CROSMOS_SPACE_ID or pass space_id."}
-        )
+    space_id, err = _resolve_space_id(args)
+    if err:
+        return json.dumps({"error": err})
 
     try:
         resp = _client.get("/graph/stats", params={"space_id": space_id})

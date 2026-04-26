@@ -82,15 +82,15 @@ All files live under `${HERMES_HOME:-$HOME/.hermes}/`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CROSMOS_API_KEY` | — | API key (required) |
-| `CROSMOS_BASE_URL` | `https://api.crosmos.dev/v1` | API endpoint |
-| `CROSMOS_SPACE_ID` | — | Memory space UUID (auto-created by install) |
+| `CROSMOS_BASE_URL` | `https://api.crosmos.dev/api/v1` | API endpoint |
+| `CROSMOS_SPACE_NAME` | `hermes-agent` | Default memory space name (auto-created by install) |
 
 **`crosmos.json`** — provider config:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `base_url` | `https://api.crosmos.dev/v1` | API endpoint |
-| `space_id` | — | Memory space UUID |
+| `base_url` | `https://api.crosmos.dev/api/v1` | API endpoint |
+| `space_name` | `hermes-agent` | Default memory space name |
 
 ## Uninstall
 
@@ -107,7 +107,7 @@ hermes config set memory.provider ""
 |---------|-----|
 | Plugin not showing in `/plugins` | Run `hermes plugins install crosmos-app/hermes-crosmos` |
 | "Crosmos is not configured" | Check `CROSMOS_API_KEY` is set in `HERMES_HOME/.env` |
-| Memories not recalled | Check `CROSMOS_SPACE_ID` is set; verify with `crosmos_recall` tool |
+| Memories not recalled | Check `CROSMOS_SPACE_NAME` is set and the space exists; verify with `crosmos_recall` tool |
 | Connection errors | Verify `CROSMOS_BASE_URL` and check `HERMES_HOME/logs/agent.log` |
 
 ## License
