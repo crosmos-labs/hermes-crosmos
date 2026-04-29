@@ -2,8 +2,28 @@
 
 import json
 import os
+from pathlib import Path
 
 import httpx
+
+
+def _load_hermes_env() -> None:
+    hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+    env_file = Path(hermes_home) / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_hermes_env()
 
 _BASE_URL = os.environ.get("CROSMOS_BASE_URL", "https://api.crosmos.dev/api/v1")
 _API_KEY = os.environ.get("CROSMOS_API_KEY", "")

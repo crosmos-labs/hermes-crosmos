@@ -13,6 +13,10 @@ from .tools import _client, _resolve_space_id
 logger = logging.getLogger(__name__)
 
 _API_KEY = os.environ.get("CROSMOS_API_KEY", "")
+if not _API_KEY:
+    from .tools import _load_hermes_env
+    _load_hermes_env()
+    _API_KEY = os.environ.get("CROSMOS_API_KEY", "")
 
 _INJECTION_PATTERNS = re.compile(
     r"(?i)\b(ignore\s+(previous|above|prior|earlier|all)\s+(instructions?|prompts?|rules?|directions?))|"
