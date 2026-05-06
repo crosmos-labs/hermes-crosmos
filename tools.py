@@ -1,143 +1,85 @@
-"""Tool handlers"""
+"""Stateless HTTP helpers for Crosmos tool calls."""
+
+from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
+from typing import Any
 
 import httpx
 
 
-def _load_hermes_env() -> None:
-    hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
-    env_file = Path(hermes_home) / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip("\"'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-_load_hermes_env()
-
-_BASE_URL = os.environ.get("CROSMOS_BASE_URL", "https://api.crosmos.dev/api/v1")
-_API_KEY = os.environ.get("CROSMOS_API_KEY", "")
-_DEFAULT_SPACE_NAME = os.environ.get("CROSMOS_SPACE_NAME", "")
-
-_client = httpx.Client(
-    base_url=_BASE_URL,
-    headers={
-        "Authorization": f"Bearer {_API_KEY}",
-        "Content-Type": "application/json",
-    },
-    timeout=30.0,
-)
-
-# Process-local cache: space name → UUID. Avoids re-resolving on every call.
-_space_id_cache: dict[str, str] = {}
-
-
-def _resolve_space_id(args: dict) -> tuple[str | None, str | None]:
-    """Resolve a space name to its UUID.
-
-    Priority: ``space_name`` arg → ``CROSMOS_SPACE_NAME`` env default.
-    Returns ``(space_id, error)``. Exactly one is non-None.
-    """
-    name = (args.get("space_name") or _DEFAULT_SPACE_NAME or "").strip()
-    if not name:
-        return None, (
-            "No space configured. Pass space_name or set CROSMOS_SPACE_NAME."
+def _http_error(prefix: str, exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return json.dumps(
+            {"error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
         )
-
-    if name in _space_id_cache:
-        return _space_id_cache[name], None
-
-    try:
-        resp = _client.get("/spaces", params={"name": name})
-        resp.raise_for_status()
-        spaces = resp.json().get("spaces", [])
-    except httpx.HTTPStatusError as e:
-        return None, f"HTTP {e.response.status_code}: {e.response.text[:200]}"
-    except Exception as e:
-        return None, f"Space lookup failed: {type(e).__name__}: {e}"
-
-    if not spaces:
-        return None, f"No space named '{name}' found."
-
-    space_id = spaces[0]["id"]
-    _space_id_cache[name] = space_id
-    return space_id, None
+    return json.dumps({"error": f"{prefix}: {type(exc).__name__}: {exc}"})
 
 
-def crosmos_remember(args: dict, **kwargs) -> str:
-    """Ingest content into the knowledge graph."""
-    content = args.get("content", "").strip()
+def remember(
+    client: httpx.Client, space_id: str, args: dict, session_id: str = ""
+) -> str:
+    """Ingest a single fact via /conversations as a one-message payload.
+
+    Using /conversations (not /sources) keeps explicit memories on the same
+    extraction pipeline as auto-captured turns and links them to the active
+    session for later lookback.
+    """
+    content = (args.get("content") or "").strip()
     if not content:
         return json.dumps({"error": "No content provided"})
-
-    space_id, err = _resolve_space_id(args)
-    if err:
-        return json.dumps({"error": err})
-
+    payload: dict[str, Any] = {
+        "space_id": space_id,
+        "messages": [{"role": "user", "content": content}],
+    }
+    if session_id:
+        payload["session_id"] = session_id
     try:
-        resp = _client.post(
-            "/sources",
-            json={
-                "space_id": space_id,
-                "sources": [{"content": content, "content_type": "text"}],
-            },
-        )
+        resp = client.post("/conversations", json=payload)
         resp.raise_for_status()
         data = resp.json()
         return json.dumps(
             {
                 "status": "accepted",
                 "job_id": data.get("job_id"),
-                "source_ids": data.get("source_ids", []),
-                "message": f"Content ingested. Job {data.get('job_id', 'unknown')} is processing.",
+                "message": f"Remembered. Job {data.get('job_id', 'unknown')} is processing.",
             }
         )
-    except httpx.HTTPStatusError as e:
-        return json.dumps(
-            {"error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
-        )
-    except Exception as e:
-        return json.dumps({"error": f"Ingestion failed: {type(e).__name__}: {e}"})
+    except Exception as exc:
+        return _http_error("Ingestion failed", exc)
 
 
-def crosmos_recall(args: dict, **kwargs) -> str:
-    """Search the knowledge graph for relevant memories."""
-    query = args.get("query", "").strip()
-    limit = min(max(args.get("limit", 10), 1), 50)
-    include_source = args.get("include_source", True)
+def ingest_turn(
+    client: httpx.Client,
+    space_id: str,
+    user_content: str,
+    assistant_content: str,
+    session_id: str = "",
+) -> dict:
+    """Used by sync_turn — raises on error so caller can log."""
+    payload: dict[str, Any] = {
+        "space_id": space_id,
+        "messages": [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": assistant_content},
+        ],
+    }
+    if session_id:
+        payload["session_id"] = session_id
+    resp = client.post("/conversations", json=payload)
+    resp.raise_for_status()
+    return resp.json()
 
+
+def recall(client: httpx.Client, space_id: str, args: dict) -> str:
+    query = (args.get("query") or "").strip()
     if not query:
         return json.dumps({"error": "No query provided"})
-
-    space_id, err = _resolve_space_id(args)
-    if err:
-        return json.dumps({"error": err})
-
+    limit = min(max(int(args.get("limit", 10) or 10), 1), 50)
+    include_source = bool(args.get("include_source", True))
     try:
-        resp = _client.post(
-            "/search",
-            json={
-                "query": query,
-                "space_id": space_id,
-                "limit": limit,
-                "include_source": include_source,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        candidates = data.get("candidates", [])
-        results = []
+        candidates = search(client, space_id, query, limit, include_source)
+        results: list[dict[str, Any]] = []
         for c in candidates:
             entry = {
                 "memory_id": c.get("memory_id"),
@@ -148,56 +90,41 @@ def crosmos_recall(args: dict, **kwargs) -> str:
             if include_source and c.get("source"):
                 entry["source"] = c["source"]
             results.append(entry)
-
-        return json.dumps(
-            {
-                "query": data.get("query"),
-                "results": results,
-                "total": data.get("total", len(results)),
-                "took_ms": round(data.get("took_ms", 0)),
-            }
-        )
-    except httpx.HTTPStatusError as e:
-        return json.dumps(
-            {"error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
-        )
-    except Exception as e:
-        return json.dumps({"error": f"Search failed: {type(e).__name__}: {e}"})
+        return json.dumps({"results": results, "total": len(results)})
+    except Exception as exc:
+        return _http_error("Search failed", exc)
 
 
-def crosmos_forget(args: dict, **kwargs) -> str:
-    """Soft-delete a memory."""
-    memory_id = args.get("memory_id", "").strip()
+def forget(client: httpx.Client, args: dict) -> str:
+    memory_id = (args.get("memory_id") or "").strip()
     if not memory_id:
         return json.dumps({"error": "No memory_id provided"})
-
     try:
-        resp = _client.delete(f"/memories/{memory_id}")
+        resp = client.delete(f"/memories/{memory_id}")
         if resp.status_code == 404:
             return json.dumps({"error": f"Memory {memory_id} not found"})
         resp.raise_for_status()
         return json.dumps({"status": "forgotten", "memory_id": memory_id})
-    except httpx.HTTPStatusError as e:
-        return json.dumps(
-            {"error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
-        )
-    except Exception as e:
-        return json.dumps({"error": f"Forget failed: {type(e).__name__}: {e}"})
+    except Exception as exc:
+        return _http_error("Forget failed", exc)
 
 
-def crosmos_graph_stats(args: dict, **kwargs) -> str:
-    """Get knowledge graph statistics."""
-    space_id, err = _resolve_space_id(args)
-    if err:
-        return json.dumps({"error": err})
-
-    try:
-        resp = _client.get("/graph/stats", params={"space_id": space_id})
-        resp.raise_for_status()
-        return json.dumps(resp.json())
-    except httpx.HTTPStatusError as e:
-        return json.dumps(
-            {"error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
-        )
-    except Exception as e:
-        return json.dumps({"error": f"Stats failed: {type(e).__name__}: {e}"})
+def search(
+    client: httpx.Client,
+    space_id: str,
+    query: str,
+    limit: int = 5,
+    include_source: bool = True,
+) -> list[dict[str, Any]]:
+    """Bare /search call. Raises on HTTP error."""
+    resp = client.post(
+        "/search",
+        json={
+            "query": query,
+            "space_id": space_id,
+            "limit": limit,
+            "include_source": include_source,
+        },
+    )
+    resp.raise_for_status()
+    return resp.json().get("candidates", []) or []
